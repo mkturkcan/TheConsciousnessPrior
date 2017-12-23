@@ -7,7 +7,6 @@ We modified the above code and use as a toy case
 to test the consciousness prior.
 """
 from __future__ import print_function
-from builtins import range
 
 import numpy as np
 
