@@ -4,11 +4,14 @@ from keras.layers import Input, Dense, Reshape, Flatten, Permute, TimeDistribute
 from keras.layers import SimpleRNN, LSTM, GRU
 from keras.models import Model
 from keras.losses import kullback_leibler_divergence
+from keras.regularizers import L1L2, Regularizer
 from keras import backend as K
 from keras.engine.topology import Layer
 import numpy as np
 
-latent_dim = 32
+latent_dim = 32      # Latent space dimensionality
+reg_lambda = 1e-11     # Global regularization coefficient
+decoder_loss = 1.0   # Weight of the decoder loss
 
 env = Billiards()
 X = []
@@ -30,14 +33,14 @@ def mse_regularizer(x):
     return K.mean(K.square(x))
 
 ## Define Extra Layers to Use
-class ArbitraryRegularization(Layer):
+class Regularize(Layer):
     def __init__(self, regularizer_function, **kwargs):
-        super(ArbitraryRegularization, self).__init__(**kwargs)
+        super(Regularize, self).__init__(**kwargs)
         self.supports_masking = True
         self.activity_regularizer = regularizer_function
     def get_config(self):
         config = {'regularizer_function': regularizer_function}
-        base_config = super(ArbitraryRegularization, self).get_config()
+        base_config = super(Regularize, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 class ApplyRegularization(Layer):
@@ -81,6 +84,16 @@ class SoftmaxDropout(Layer):
         return K.cast(K.greater(x + K.random_normal(shape=K.shape(x),
                                                         mean=self.mean,
                                                         stddev=self.stddev), 0.5), 'float32')
+
+class LinearRegularizer(Regularizer):
+    def __init__(self, c=0.):
+        self.c = c
+    def __call__(self, x):
+        regularization = 0.
+        regularization += K.sum(self.c * x)
+        return regularization
+    def get_config(self):
+        return {'c': float(self.c)}
 
 ## Define the Representation, Consciousness and Generator models
 def representation_rnn():
@@ -140,23 +153,23 @@ c_A = Lambda(lambda x: x[:,:-1,:], output_shape=(X.shape[1]-1, latent_dim))(c_A)
 h_A = multiply([h_A, c_A]) # Calculate h[A] to compare against a_hat
 a_hat = multiply([a_hat, c_A]) # Mask a_hat
 consciousness_error = subtract([a_hat, h_A])
-consciousness_error = ArbitraryRegularization(mse_regularizer, name='Consciousness_Generator_Error')(consciousness_error)
+consciousness_error = Regularize(L1L2(l1 = 0., l2 =1.  * reg_lambda), name='Consciousness_Generator_Error')(consciousness_error)
 
 b_transformed = Dense(latent_dim, activation='linear')(b) # Create a layer that attempts to make b independent from h[A]
 b_transformed = Lambda(lambda x: x[:,:-1,:], output_shape=(X.shape[1]-1, latent_dim))(b_transformed)
 b_transformed = multiply([b_transformed, c_A])
 transformation_error = subtract([b_transformed, h_A])
-transformation_error = ArbitraryRegularization(mse_regularizer, name='Transformation_Error')(transformation_error)
+transformation_error = Regularize(L1L2(l1 = 0., l2 =1. * reg_lambda), name='Transformation_Error')(transformation_error)
 
 intelligence_error = concatenate([c_A_soft, c_B_soft]) # The more elements we choose to predict, the more "intelligent" we are
 intelligence_error = Flatten()(intelligence_error)
-intelligence_error = ArbitraryRegularization(linear_regularizer, name='Intelligence_Level')(intelligence_error)
+intelligence_error = Regularize(LinearRegularizer(c = 1. * reg_lambda), name='Intelligence_Level')(intelligence_error)
 
 x_hat = D(a_hat)
 x_hat = ApplyRegularization()([x_hat, consciousness_error, transformation_error, intelligence_error])
 
 ## Compile the model and start training
 CN = Model(inputs=i, outputs=[x_hat])
-CN.compile(optimizer='rmsprop', loss=['mse'])
+CN.compile(optimizer='rmsprop', loss=['mse'], loss_weights = [decoder_loss])
 CN.summary()
 history = CN.fit(X, [X[:,1:,:]], epochs=1024, validation_split = 0.25)
