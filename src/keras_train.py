@@ -19,12 +19,35 @@ for i in range(M):
     X.append(env.frames)
 
 X = np.stack(X)
-X.shape
 
 def linear_objective(y_true, y_pred):
     return 1.0 - 1.0 * K.mean(y_pred, axis=-1)
 
+def linear_regularizer(x):
+    return K.mean(x)
+
+def mse_regularizer(x):
+    return K.mean(K.square(x))
+
 ## Define Extra Layers to Use
+class ArbitraryRegularization(Layer):
+    def __init__(self, regularizer_function, **kwargs):
+        super(ArbitraryRegularization, self).__init__(**kwargs)
+        self.supports_masking = True
+        self.activity_regularizer = regularizer_function
+    def get_config(self):
+        config = {'regularizer_function': regularizer_function}
+        base_config = super(ArbitraryRegularization, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+class ApplyRegularization(Layer):
+    def __init__(self, **kwargs):
+        super(ApplyRegularization, self).__init__(**kwargs)
+    def build(self, input_shape):
+        super(ApplyRegularization, self).build(input_shape)
+    def call(self, x):
+        return x[0]
+
 class CELayer(Layer):
     def __init__(self, **kwargs):
         super(CELayer, self).__init__(**kwargs)
@@ -90,11 +113,20 @@ def generator_rnn():
     model = Model(inputs=[ia, ib, ic], outputs=x, name='Generator')
     return model
 
+def decoder_rnn():
+    i = Input(shape=(X.shape[1], latent_dim))
+    x = GRU(1024, return_sequences = True)(i)
+    x = TimeDistributed(Reshape((X.shape[2], X.shape[3])))(x)
+    model = Model(inputs=i, outputs=x, name='Decoder')
+    return model
+
+print(X.shape)
 ## Start constructing the circuit
 i = Input(shape=X.shape[1:])
 R = representation_rnn()
 C = consciousness_rnn()
 G = generator_rnn()
+D = decoder_rnn()
 
 h = R(i) # Get h from R
 c_A, c_B, c_A_soft, c_B_soft = C(h) # Get masks c_A and c_B from C
@@ -107,21 +139,24 @@ c_A = Lambda(lambda x: x[:,:-1,:], output_shape=(X.shape[1]-1, latent_dim))(c_A)
 
 h_A = multiply([h_A, c_A]) # Calculate h[A] to compare against a_hat
 a_hat = multiply([a_hat, c_A]) # Mask a_hat
-prediction_error = subtract([a_hat, h_A], name='Prediction_Error')
+consciousness_error = subtract([a_hat, h_A])
+consciousness_error = ArbitraryRegularization(mse_regularizer, name='Consciousness_Generator_Error')(consciousness_error)
 
 b_transformed = Dense(latent_dim, activation='linear')(b) # Create a layer that attempts to make b independent from h[A]
 b_transformed = Lambda(lambda x: x[:,:-1,:], output_shape=(X.shape[1]-1, latent_dim))(b_transformed)
 b_transformed = multiply([b_transformed, c_A])
-#transformation_error = CPLayer(name='Transformation_Error')([b_transformed, h_A])
-transformation_error = subtract([b_transformed, h_A], name='Transformation_Error')
+transformation_error = subtract([b_transformed, h_A])
+transformation_error = ArbitraryRegularization(mse_regularizer, name='Transformation_Error')(transformation_error)
 
 intelligence_error = concatenate([c_A_soft, c_B_soft]) # The more elements we choose to predict, the more "intelligent" we are
-intelligence_error = Flatten(name='Intelligence_Level')(intelligence_error)
+intelligence_error = Flatten()(intelligence_error)
+intelligence_error = ArbitraryRegularization(linear_regularizer, name='Intelligence_Level')(intelligence_error)
+
+x_hat = D(a_hat)
+x_hat = ApplyRegularization()([x_hat, consciousness_error, transformation_error, intelligence_error])
 
 ## Compile the model and start training
-CN = Model(inputs=i, outputs=[prediction_error, transformation_error, intelligence_error])
-CN.compile(optimizer='rmsprop', loss=['mse', 'mse', linear_objective])
+CN = Model(inputs=i, outputs=[x_hat])
+CN.compile(optimizer='rmsprop', loss=['mse'])
 CN.summary()
-history = CN.fit(X,
-                 [np.zeros((X.shape[0], X.shape[1]-1, latent_dim)), np.zeros((X.shape[0], X.shape[1]-1, latent_dim)), np.zeros((X.shape[0], (X.shape[1]-1)*2*latent_dim))],
-                 epochs=1024)
+history = CN.fit(X, [X[:,1:,:]], epochs=1024, validation_split = 0.25)
