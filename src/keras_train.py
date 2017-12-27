@@ -69,12 +69,12 @@ def representation_rnn():
 
 def consciousness_rnn():
     i = Input(shape=(X.shape[1], latent_dim))
-    x = GRU(latent_dim, return_sequences = True)(i)
-    x = TimeDistributed(Dense(X.shape[2], activation='sigmoid'))(x)
+    x_gru = GRU(latent_dim, return_sequences = True)(i)
+    x = TimeDistributed(Dense(X.shape[2], activation='sigmoid'))(x_gru)
     xa_probabilities = x
     x = SoftmaxDropout(0.,1.0)(x)
     xa = Reshape([X.shape[1], 32])(x)
-    x = TimeDistributed(Dense(X.shape[2], activation='sigmoid'))(x)
+    x = TimeDistributed(Dense(X.shape[2], activation='sigmoid'))(x_gru)
     xb_probabilities = x
     x = SoftmaxDropout(0.,1.0)(x)
     xb = Reshape([X.shape[1], 32])(x)
