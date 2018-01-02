@@ -10,7 +10,7 @@ from keras.engine.topology import Layer
 import numpy as np
 
 latent_dim = 32      # Latent space dimensionality
-reg_lambda = 1e-11     # Global regularization coefficient
+reg_lambda = 1e-4    # Global regularization coefficient
 decoder_loss = 1.0   # Weight of the decoder loss
 
 env = Billiards()
@@ -22,6 +22,7 @@ for i in range(M):
     X.append(env.frames)
 
 X = np.stack(X)
+X = X / np.max(X)
 
 def linear_objective(y_true, y_pred):
     return 1.0 - 1.0 * K.mean(y_pred, axis=-1)
