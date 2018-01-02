@@ -562,7 +562,7 @@ def build_model(stateful, batch_size=None):
     model.add(Activation('linear'))
     return model
 
-batch_size = 512
+batch_size = 32
 model = build_model(stateful=True, batch_size=batch_size)
 policy_model = build_model(stateful=True, batch_size=1)
 print(model.summary())
